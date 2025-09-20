@@ -8,7 +8,7 @@ import os
 import zipfile
 import json
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import plotly.graph_objects as go
 import plotly.express as px
 from reportlab.lib.pagesizes import letter
