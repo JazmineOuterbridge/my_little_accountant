@@ -26,20 +26,61 @@ echo ""
 # Check if Python is available
 if command -v python3 &> /dev/null; then
     echo "Using Python to run the app..."
+    echo "Installing dependencies if needed..."
+    python3 -m pip install -r requirements.txt --quiet
+    echo ""
+    echo "Starting My Little Accountant..."
+    echo "Your browser will open automatically at http://localhost:8501"
+    echo ""
+    echo "If the browser doesn't open automatically, please go to:"
+    echo "http://localhost:8501"
+    echo ""
+    sleep 3
+    open http://localhost:8501 2>/dev/null || xdg-open http://localhost:8501 2>/dev/null || echo "Please open http://localhost:8501 in your browser"
     python3 -m streamlit run main.py --server.headless true --server.port 8501
 elif command -v python &> /dev/null; then
     echo "Using Python to run the app..."
+    echo "Installing dependencies if needed..."
+    python -m pip install -r requirements.txt --quiet
+    echo ""
+    echo "Starting My Little Accountant..."
+    echo "Your browser will open automatically at http://localhost:8501"
+    echo ""
+    echo "If the browser doesn't open automatically, please go to:"
+    echo "http://localhost:8501"
+    echo ""
+    sleep 3
+    open http://localhost:8501 2>/dev/null || xdg-open http://localhost:8501 2>/dev/null || echo "Please open http://localhost:8501 in your browser"
     python -m streamlit run main.py --server.headless true --server.port 8501
 else
     echo "Python not found. Trying to run the standalone executable..."
     if [ -f "MyLittleAccountant" ]; then
         chmod +x MyLittleAccountant
-        ./MyLittleAccountant
+        echo "Starting standalone executable..."
+        ./MyLittleAccountant &
+        sleep 3
+        open http://localhost:8501 2>/dev/null || xdg-open http://localhost:8501 2>/dev/null || echo "Please open http://localhost:8501 in your browser"
     elif [ -d "MyLittleAccountant.app" ]; then
+        echo "Starting macOS application..."
         open MyLittleAccountant.app
+        sleep 3
+        open http://localhost:8501 2>/dev/null || echo "Please open http://localhost:8501 in your browser"
     else
-        echo "Error: Neither Python nor the executable was found."
-        echo "Please make sure you have downloaded the complete package."
+        echo ""
+        echo "========================================"
+        echo "ERROR: Cannot start the application"
+        echo "========================================"
+        echo ""
+        echo "Neither Python nor the executable was found."
+        echo ""
+        echo "Please make sure you have:"
+        echo "1. Downloaded the complete package"
+        echo "2. Extracted all files to a folder"
+        echo "3. Run this setup.sh file from that folder"
+        echo ""
+        echo "If you're missing Python, you can:"
+        echo "- Install Python from https://python.org"
+        echo "- Or download a pre-built executable version"
         echo ""
         read -p "Press Enter to exit..."
         exit 1
