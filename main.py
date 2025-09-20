@@ -534,17 +534,35 @@ def main():
                     )
                 
                 with col2:
-                    excel_data = st.session_state.export_manager.export_to_excel(
-                        st.session_state.transactions, 
-                        f"transactions_{timestamp}.xlsx"
-                    )
-                    with open(excel_data, 'rb') as f:
+                    try:
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp_file:
+                            excel_path = tmp_file.name
+                        
+                        st.session_state.export_manager.export_to_excel(
+                            st.session_state.transactions, 
+                            excel_path
+                        )
+                        
+                        with open(excel_path, 'rb') as f:
+                            excel_data = f.read()
+                        
                         st.download_button(
                             label="📊 Excel",
-                            data=f.read(),
+                            data=excel_data,
                             file_name=f"transactions_{timestamp}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
+                        
+                        # Clean up temporary file
+                        try:
+                            os.unlink(excel_path)
+                        except:
+                            pass
+                            
+                    except Exception as e:
+                        st.error(f"Could not create Excel export: {str(e)}")
+                        st.info("CSV export is still available.")
             else:
                 st.warning("No data to export")
         
@@ -646,15 +664,33 @@ def main():
             )
             
             # Create sample Excel
-            excel_path = "sample_transactions.xlsx"
-            st.session_state.export_manager.export_to_excel(sample_df, excel_path)
-            with open(excel_path, 'rb') as f:
+            try:
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp_file:
+                    excel_path = tmp_file.name
+                
+                st.session_state.export_manager.export_to_excel(sample_df, excel_path)
+                
+                with open(excel_path, 'rb') as f:
+                    excel_data = f.read()
+                
                 st.download_button(
                     label="📊 Download Sample Excel",
-                    data=f.read(),
+                    data=excel_data,
                     file_name="sample_transactions.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+                
+                # Clean up temporary file
+                import os
+                try:
+                    os.unlink(excel_path)
+                except:
+                    pass
+                    
+            except Exception as e:
+                st.error(f"Could not create sample Excel file: {str(e)}")
+                st.info("You can still download the CSV sample file above.")
     
     with tab2:
         st.markdown("### 🏷️ Categorize Your Transactions")
