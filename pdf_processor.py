@@ -101,21 +101,39 @@ class BankPDFProcessor:
         if any(skip_word.lower() in line.lower() for skip_word in skip_words):
             return None
         
-        # Extract date
-        date_pattern = self.bank_patterns.get(bank_type, {}).get('date_pattern', r'\d{2}/\d{2}/\d{4}')
-        date_match = re.search(date_pattern, line)
+        # Enhanced date patterns for various formats
+        date_patterns = [
+            r'\d{2}/\d{2}/\d{4}',  # MM/DD/YYYY
+            r'\d{2}-\d{2}-\d{4}',  # MM-DD-YYYY
+            r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+            r'\d{1,2}/\d{1,2}/\d{4}',  # M/D/YYYY
+            r'\d{1,2}/\d{1,2}/\d{2}',  # M/D/YY
+        ]
+        
+        date_match = None
+        date_str = None
+        
+        for pattern in date_patterns:
+            date_match = re.search(pattern, line)
+            if date_match:
+                date_str = date_match.group()
+                break
+        
         if not date_match:
             return None
         
-        date_str = date_match.group()
-        
-        # Extract amount (look for patterns like 1,234.56 or -1,234.56)
+        # Enhanced amount patterns
         amount_patterns = [
-            r'(-?[\d,]+\.\d{2})',  # Standard amount with optional negative
-            r'(-?\$\s?[\d,]+\.\d{2})',  # Amount with dollar sign
+            r'(-?\$?\s?[\d,]+\.\d{2})',  # Standard amount with optional negative and dollar sign
+            r'(-?\$?\s?[\d,]+\d{2})',    # Amount without decimal point
+            r'(-?\$?\s?[\d,]+)',         # Amount without cents
+            r'(-?[\d,]+\.\d{2})',        # Standard amount with optional negative
+            r'(-?[\d,]+\.\d{1})',        # Amount with one decimal place
         ]
         
         amount = None
+        amount_match = None
+        
         for pattern in amount_patterns:
             amount_match = re.search(pattern, line)
             if amount_match:
@@ -134,11 +152,13 @@ class BankPDFProcessor:
         amount_start = line.find(amount_match.group())
         
         description = line[date_end:amount_start].strip()
-        # Clean up description
+        
+        # Clean up description - remove reference numbers and extra whitespace
         description = re.sub(r'\s+', ' ', description)  # Remove extra whitespace
+        description = re.sub(r'^\d+\s*', '', description)  # Remove leading reference numbers
         description = description.strip()
         
-        if not description:
+        if not description or len(description) < 3:
             return None
         
         return {
@@ -167,15 +187,28 @@ class BankPDFProcessor:
             if progress_callback:
                 progress_callback(f"Processing {bank_type} format...")
             
-            # Split into lines
+            # Split into lines and clean
             lines = text.split('\n')
+            cleaned_lines = []
+            
+            # Clean and filter lines
+            for line in lines:
+                line = line.strip()
+                if line and len(line) > 10:  # Skip very short lines
+                    cleaned_lines.append(line)
             
             # Extract transactions
             transactions = []
-            for line in lines:
+            for line in cleaned_lines:
                 transaction = self.parse_transaction_line(line, bank_type)
                 if transaction:
                     transactions.append(transaction)
+            
+            # If no transactions found with line-by-line parsing, try table extraction
+            if not transactions:
+                if progress_callback:
+                    progress_callback("Trying table extraction...")
+                transactions = self.extract_from_tables(pdf_path)
             
             if progress_callback:
                 progress_callback(f"Found {len(transactions)} transactions")
@@ -193,6 +226,37 @@ class BankPDFProcessor:
         except Exception as e:
             logger.error(f"Error processing PDF {pdf_path}: {e}")
             raise Exception(f"Failed to process PDF: {str(e)}")
+    
+    def extract_from_tables(self, pdf_path: str) -> List[Dict]:
+        """Extract transactions from PDF tables using pdfplumber"""
+        transactions = []
+        
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                for page in pdf.pages:
+                    # Extract tables
+                    tables = page.extract_tables()
+                    
+                    for table in tables:
+                        if not table:
+                            continue
+                        
+                        # Look for table with date, description, amount columns
+                        for row in table:
+                            if not row or len(row) < 3:
+                                continue
+                            
+                            # Try to parse row as transaction
+                            row_text = ' '.join([str(cell) for cell in row if cell])
+                            transaction = self.parse_transaction_line(row_text, 'generic')
+                            
+                            if transaction:
+                                transactions.append(transaction)
+                                
+        except Exception as e:
+            logger.error(f"Error extracting from tables: {e}")
+        
+        return transactions
     
     def process_multiple_pdfs(self, pdf_paths: List[str], progress_callback=None) -> pd.DataFrame:
         """Process multiple PDF files"""
