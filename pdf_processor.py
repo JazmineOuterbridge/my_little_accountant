@@ -9,6 +9,9 @@ import re
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing as mp
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -168,10 +171,12 @@ class BankPDFProcessor:
         }
     
     def process_pdf(self, pdf_path: str, progress_callback=None) -> pd.DataFrame:
-        """Process PDF and extract transactions"""
+        """Process PDF and extract transactions with enhanced speed and progress tracking"""
+        start_time = time.time()
+        
         try:
             if progress_callback:
-                progress_callback("Reading PDF file...")
+                progress_callback("Reading PDF file...", 0, "Starting PDF processing")
             
             # Extract text
             text = self.extract_text_from_pdf(pdf_path)
@@ -179,39 +184,48 @@ class BankPDFProcessor:
                 raise ValueError("Could not extract text from PDF")
             
             if progress_callback:
-                progress_callback("Detecting bank format...")
+                progress_callback("Detecting bank format...", 20, "Text extracted successfully")
             
             # Detect bank type
             bank_type = self.detect_bank(text)
             
             if progress_callback:
-                progress_callback(f"Processing {bank_type} format...")
+                progress_callback(f"Processing {bank_type} format...", 40, f"Bank type: {bank_type}")
             
-            # Split into lines and clean
+            # Split into lines and clean with parallel processing
             lines = text.split('\n')
             cleaned_lines = []
             
-            # Clean and filter lines
-            for line in lines:
-                line = line.strip()
-                if line and len(line) > 10:  # Skip very short lines
-                    cleaned_lines.append(line)
+            # Use list comprehension for faster line cleaning
+            cleaned_lines = [line.strip() for line in lines if line.strip() and len(line.strip()) > 10]
             
-            # Extract transactions
+            if progress_callback:
+                progress_callback("Parsing transactions...", 60, f"Processing {len(cleaned_lines)} lines")
+            
+            # Extract transactions with progress tracking
             transactions = []
-            for line in cleaned_lines:
+            total_lines = len(cleaned_lines)
+            
+            for i, line in enumerate(cleaned_lines):
                 transaction = self.parse_transaction_line(line, bank_type)
                 if transaction:
                     transactions.append(transaction)
+                
+                # Update progress every 10% of lines
+                if progress_callback and i % max(1, total_lines // 10) == 0:
+                    progress = 60 + (i / total_lines) * 20  # 60-80% for parsing
+                    progress_callback(f"Parsed {i}/{total_lines} lines...", progress, f"Found {len(transactions)} transactions so far")
             
             # If no transactions found with line-by-line parsing, try table extraction
             if not transactions:
                 if progress_callback:
-                    progress_callback("Trying table extraction...")
+                    progress_callback("Trying table extraction...", 80, "Line parsing failed, trying tables")
                 transactions = self.extract_from_tables(pdf_path)
             
+            processing_time = time.time() - start_time
+            
             if progress_callback:
-                progress_callback(f"Found {len(transactions)} transactions")
+                progress_callback(f"Found {len(transactions)} transactions", 100, f"Completed in {processing_time:.2f}s")
             
             # Create DataFrame
             if transactions:
@@ -259,25 +273,86 @@ class BankPDFProcessor:
         return transactions
     
     def process_multiple_pdfs(self, pdf_paths: List[str], progress_callback=None) -> pd.DataFrame:
-        """Process multiple PDF files"""
+        """Process multiple PDF files with parallel processing and enhanced progress tracking"""
+        start_time = time.time()
         all_transactions = []
         
-        for i, pdf_path in enumerate(pdf_paths):
-            if progress_callback:
-                progress_callback(f"Processing PDF {i+1} of {len(pdf_paths)}: {pdf_path}")
-            
+        # Use parallel processing for multiple PDFs
+        max_workers = min(len(pdf_paths), mp.cpu_count())
+        
+        def process_single_pdf(pdf_path):
+            """Process a single PDF file"""
             try:
-                df = self.process_pdf(pdf_path, progress_callback)
-                if not df.empty:
-                    all_transactions.append(df)
+                # Create a callback that includes file-specific progress
+                def file_progress_callback(message, progress, details):
+                    if progress_callback:
+                        filename = pdf_path.split('/')[-1] if '/' in pdf_path else pdf_path.split('\\')[-1]
+                        progress_callback(f"[{filename}] {message}", progress, details)
+                
+                df = self.process_pdf(pdf_path, file_progress_callback)
+                return df if not df.empty else None
             except Exception as e:
                 logger.error(f"Error processing {pdf_path}: {e}")
-                continue
+                return None
+        
+        # Process PDFs in parallel for better performance
+        if len(pdf_paths) > 1:
+            if progress_callback:
+                progress_callback("Starting parallel PDF processing...", 0, f"Processing {len(pdf_paths)} PDFs with {max_workers} workers")
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all PDF processing tasks
+                future_to_pdf = {executor.submit(process_single_pdf, pdf_path): pdf_path for pdf_path in pdf_paths}
+                
+                completed = 0
+                for future in as_completed(future_to_pdf):
+                    pdf_path = future_to_pdf[future]
+                    completed += 1
+                    
+                    try:
+                        df = future.result()
+                        if df is not None:
+                            all_transactions.append(df)
+                        
+                        if progress_callback:
+                            progress = (completed / len(pdf_paths)) * 100
+                            progress_callback(f"Completed {completed}/{len(pdf_paths)} PDFs", progress, f"Processed: {pdf_path}")
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing {pdf_path}: {e}")
+                        if progress_callback:
+                            progress = (completed / len(pdf_paths)) * 100
+                            progress_callback(f"Error in {pdf_path}", progress, f"Error: {str(e)}")
+        else:
+            # Single PDF processing
+            for i, pdf_path in enumerate(pdf_paths):
+                if progress_callback:
+                    progress_callback(f"Processing PDF {i+1} of {len(pdf_paths)}: {pdf_path}", 0, "Starting single PDF processing")
+                
+                try:
+                    df = self.process_pdf(pdf_path, progress_callback)
+                    if not df.empty:
+                        all_transactions.append(df)
+                except Exception as e:
+                    logger.error(f"Error processing {pdf_path}: {e}")
+                    continue
+        
+        processing_time = time.time() - start_time
         
         if all_transactions:
+            if progress_callback:
+                total_transactions = sum(len(df) for df in all_transactions)
+                progress_callback(f"Combining {len(all_transactions)} PDFs...", 90, f"Total transactions: {total_transactions}")
+            
             combined_df = pd.concat(all_transactions, ignore_index=True)
+            
+            if progress_callback:
+                progress_callback(f"✅ Processing complete!", 100, f"Combined {len(all_transactions)} PDFs into {len(combined_df)} transactions in {processing_time:.2f}s")
+            
             return combined_df
         else:
+            if progress_callback:
+                progress_callback("❌ No transactions found", 100, f"Processed {len(pdf_paths)} PDFs in {processing_time:.2f}s")
             return pd.DataFrame(columns=['Date', 'Description', 'Amount'])
 
 def process_pdf_file(pdf_path: str, progress_callback=None) -> pd.DataFrame:

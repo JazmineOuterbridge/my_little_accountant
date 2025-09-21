@@ -134,7 +134,8 @@ def show_welcome_tour():
                 st.rerun()
 
 def process_uploaded_files(uploaded_files):
-    """Process uploaded files and return combined DataFrame"""
+    """Process uploaded files with enhanced speed and progress tracking"""
+    start_time = time.time()
     all_data = []
     pdf_files = []
     csv_files = []
@@ -150,43 +151,65 @@ def process_uploaded_files(uploaded_files):
         elif file_extension in ['xlsx', 'xls']:
             excel_files.append(uploaded_file)
     
+    # Enhanced progress tracking
     progress_bar = st.progress(0)
     status_text = st.empty()
+    time_text = st.empty()
+    details_text = st.empty()
     
     total_files = len(uploaded_files)
+    processed_files = 0
     
-    # Process CSV files
+    def update_progress(message, progress, details=""):
+        """Update progress with time estimation"""
+        elapsed_time = time.time() - start_time
+        if progress > 0:
+            estimated_total = elapsed_time / (progress / 100)
+            remaining_time = estimated_total - elapsed_time
+            time_text.text(f"⏱️ Elapsed: {elapsed_time:.1f}s | Remaining: ~{remaining_time:.1f}s")
+        else:
+            time_text.text(f"⏱️ Elapsed: {elapsed_time:.1f}s")
+        
+        status_text.text(f"📊 {message}")
+        details_text.text(f"ℹ️ {details}")
+        progress_bar.progress(progress / 100)
+    
+    update_progress("Starting file processing...", 0, f"Processing {total_files} files")
+    
+    # Process CSV files with progress tracking
     for i, uploaded_file in enumerate(csv_files):
-        status_text.text(f"Processing CSV file: {uploaded_file.name}")
+        update_progress(f"Processing CSV: {uploaded_file.name}", (processed_files / total_files) * 100, f"CSV file {i+1}/{len(csv_files)}")
         try:
             df = pd.read_csv(uploaded_file)
             # Standardize column names
             df.columns = df.columns.str.title()
             if 'Date' in df.columns and 'Description' in df.columns and 'Amount' in df.columns:
                 all_data.append(df[['Date', 'Description', 'Amount']])
+                update_progress(f"✅ CSV processed: {len(df)} transactions", (processed_files / total_files) * 100, f"Found {len(df)} transactions")
             else:
                 st.warning(f"⚠️ {uploaded_file.name} doesn't have the expected columns (Date, Description, Amount)")
         except Exception as e:
             st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
-        progress_bar.progress((i + 1) / total_files)
+        processed_files += 1
     
-    # Process Excel files
+    # Process Excel files with progress tracking
     for i, uploaded_file in enumerate(excel_files):
-        status_text.text(f"Processing Excel file: {uploaded_file.name}")
+        update_progress(f"Processing Excel: {uploaded_file.name}", (processed_files / total_files) * 100, f"Excel file {i+1}/{len(excel_files)}")
         try:
             df = pd.read_excel(uploaded_file)
             df.columns = df.columns.str.title()
             if 'Date' in df.columns and 'Description' in df.columns and 'Amount' in df.columns:
                 all_data.append(df[['Date', 'Description', 'Amount']])
+                update_progress(f"✅ Excel processed: {len(df)} transactions", (processed_files / total_files) * 100, f"Found {len(df)} transactions")
             else:
                 st.warning(f"⚠️ {uploaded_file.name} doesn't have the expected columns (Date, Description, Amount)")
         except Exception as e:
             st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
-        progress_bar.progress((len(csv_files) + i + 1) / total_files)
+        processed_files += 1
     
-    # Process PDF files
+    # Process PDF files with enhanced progress tracking
     if pdf_files:
-        status_text.text("Processing PDF files...")
+        update_progress("Processing PDF files...", (processed_files / total_files) * 100, f"PDF files: {len(pdf_files)}")
         try:
             # Save PDFs to temporary files
             temp_pdf_paths = []
@@ -195,11 +218,15 @@ def process_uploaded_files(uploaded_files):
                     tmp_file.write(uploaded_file.getvalue())
                     temp_pdf_paths.append(tmp_file.name)
             
-            # Process PDFs
-            def progress_callback(message):
-                status_text.text(message)
+            # Enhanced PDF progress callback
+            def pdf_progress_callback(message, progress, details):
+                # Map PDF progress to overall progress (processed_files to 100%)
+                pdf_progress_start = (processed_files / total_files) * 100
+                pdf_progress_end = 100
+                overall_progress = pdf_progress_start + (pdf_progress_end - pdf_progress_start) * (progress / 100)
+                update_progress(message, overall_progress, details)
             
-            pdf_df = process_pdf_files(temp_pdf_paths, progress_callback)
+            pdf_df = process_pdf_files(temp_pdf_paths, pdf_progress_callback)
             if not pdf_df.empty:
                 all_data.append(pdf_df)
             
@@ -213,14 +240,15 @@ def process_uploaded_files(uploaded_files):
         except Exception as e:
             st.error(f"❌ Error processing PDF files: {str(e)}")
         
-        progress_bar.progress(1.0)
+        processed_files += len(pdf_files)
     
-    # Combine all data
+    # Combine all data with progress tracking
     if all_data:
+        update_progress("Combining all data...", 95, f"Combining {len(all_data)} file(s)")
         combined_df = pd.concat(all_data, ignore_index=True)
         
-        # Clean the data
-        status_text.text("Cleaning and validating data...")
+        # Clean the data with progress tracking
+        update_progress("Cleaning and validating data...", 96, f"Processing {len(combined_df)} transactions")
         cleaned_df, issues = clean_transaction_data(combined_df)
         
         # Show data quality report
@@ -231,79 +259,168 @@ def process_uploaded_files(uploaded_files):
                     if indices:
                         st.warning(f"⚠️ {issue_type.replace('_', ' ').title()}: {len(indices)} transactions")
         
-        # Auto-categorize
-        status_text.text("Auto-categorizing transactions...")
+        # Auto-categorize with progress tracking
+        update_progress("Auto-categorizing transactions...", 98, f"Analyzing {len(cleaned_df)} transactions")
         categorized_df = categorize_transactions(cleaned_df)
         
-        status_text.text("✅ Processing complete!")
-        progress_bar.progress(1.0)
-        time.sleep(1)
+        total_time = time.time() - start_time
+        update_progress("✅ Processing complete!", 100, f"Processed {len(categorized_df)} transactions in {total_time:.2f}s")
         
+        # Show performance summary
+        with st.expander("⚡ Performance Summary", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Time", f"{total_time:.2f}s")
+            with col2:
+                st.metric("Files Processed", total_files)
+            with col3:
+                st.metric("Transactions/sec", f"{len(categorized_df)/total_time:.1f}")
+        
+        time.sleep(1)
         return categorized_df
     
+    update_progress("❌ No valid transactions found", 100, "Please check your file formats")
     return pd.DataFrame(columns=['Date', 'Description', 'Amount', 'Category'])
 
 def display_transaction_table(df):
-    """Display transaction table with categorization interface"""
+    """Display transaction table with enhanced categorization interface and performance"""
     if df.empty:
         st.info("📝 No transactions to display. Upload some bank statements to get started!")
         return
     
-    # Search and filter
+    # Performance metrics
+    start_time = time.time()
+    
+    # Search and filter with performance optimization
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        search_term = st.text_input("🔍 Search transactions", placeholder="Search by description...")
+        search_term = st.text_input("🔍 Search transactions", placeholder="Search by description...", key="search_input")
     
     with col2:
         category_filter = st.selectbox(
             "Filter by category",
-            ["All Categories"] + list(st.session_state.category_engine.categories.keys())
+            ["All Categories"] + list(st.session_state.category_engine.categories.keys()),
+            key="category_filter"
         )
     
     with col3:
-        show_uncategorized = st.checkbox("Show uncategorized only", value=False)
+        show_uncategorized = st.checkbox("Show uncategorized only", value=False, key="uncategorized_filter")
     
-    # Apply filters
-    filtered_df = df.copy()
+    # Apply filters with caching for better performance
+    @st.cache_data(ttl=60)  # Cache for 1 minute
+    def apply_filters(df, search_term, category_filter, show_uncategorized):
+        filtered_df = df.copy()
+        
+        if search_term:
+            filtered_df = filtered_df[filtered_df['Description'].str.contains(search_term, case=False, na=False)]
+        
+        if category_filter != "All Categories":
+            filtered_df = filtered_df[filtered_df['Category'] == category_filter]
+        
+        if show_uncategorized:
+            filtered_df = filtered_df[(filtered_df['Category'].isna()) | (filtered_df['Category'] == '') | (filtered_df['Category'] == 'Other')]
+        
+        return filtered_df
     
-    if search_term:
-        filtered_df = filtered_df[filtered_df['Description'].str.contains(search_term, case=False, na=False)]
+    filtered_df = apply_filters(df, search_term, category_filter, show_uncategorized)
     
-    if category_filter != "All Categories":
-        filtered_df = filtered_df[filtered_df['Category'] == category_filter]
+    # Performance info
+    filter_time = time.time() - start_time
+    st.markdown(f"**Showing {len(filtered_df)} of {len(df)} transactions** | ⚡ Filtered in {filter_time:.3f}s")
     
-    if show_uncategorized:
-        filtered_df = filtered_df[(filtered_df['Category'].isna()) | (filtered_df['Category'] == '') | (filtered_df['Category'] == 'Other')]
-    
-    st.markdown(f"**Showing {len(filtered_df)} of {len(df)} transactions**")
-    
-    # Bulk categorization
+    # Enhanced bulk categorization with progress tracking
     if len(filtered_df) > 0:
-        col1, col2, col3 = st.columns([1, 1, 1])
+        st.markdown("### 🏷️ Bulk Categorization")
+        
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
         
         with col1:
-            select_all = st.checkbox("Select all showing transactions")
+            select_all = st.checkbox("Select all showing transactions", key="select_all")
         
         with col2:
             bulk_category = st.selectbox(
                 "Bulk assign category",
-                [""] + list(st.session_state.category_engine.categories.keys())
+                [""] + list(st.session_state.category_engine.categories.keys()),
+                key="bulk_category"
             )
         
         with col3:
-            if st.button("Apply to Selected", disabled=not bulk_category):
+            if st.button("🚀 Apply to Selected", disabled=not bulk_category, type="primary"):
                 if select_all:
+                    start_time = time.time()
                     indices = filtered_df.index.tolist()
-                    st.session_state.transactions.loc[indices, 'Category'] = bulk_category
+                    
+                    # Progress bar for bulk operations
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    for i, idx in enumerate(indices):
+                        st.session_state.transactions.loc[idx, 'Category'] = bulk_category
+                        if i % max(1, len(indices) // 20) == 0:  # Update every 5%
+                            progress_bar.progress((i + 1) / len(indices))
+                            status_text.text(f"Updating {i + 1}/{len(indices)} transactions...")
+                    
+                    progress_bar.progress(1.0)
+                    status_text.text(f"✅ Completed in {time.time() - start_time:.2f}s")
+                    
                     st.success(f"✅ Assigned '{bulk_category}' to {len(indices)} transactions")
                     st.rerun()
+        
+        with col4:
+            # Smart categorization suggestions
+            if st.button("🤖 Smart Categorize", help="Use AI to categorize uncategorized transactions"):
+                uncategorized = filtered_df[(filtered_df['Category'].isna()) | (filtered_df['Category'] == '') | (filtered_df['Category'] == 'Other')]
+                
+                if len(uncategorized) > 0:
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    start_time = time.time()
+                    
+                    for i, idx in enumerate(uncategorized.index):
+                        suggestions = get_category_suggestions(uncategorized.loc[idx, 'Description'])
+                        if suggestions:
+                            best_category = suggestions[0]
+                            st.session_state.transactions.loc[idx, 'Category'] = best_category
+                        
+                        if i % max(1, len(uncategorized) // 20) == 0:
+                            progress_bar.progress((i + 1) / len(uncategorized))
+                            status_text.text(f"Smart categorizing {i + 1}/{len(uncategorized)} transactions...")
+                    
+                    progress_bar.progress(1.0)
+                    status_text.text(f"✅ Smart categorization completed in {time.time() - start_time:.2f}s")
+                    
+                    st.success(f"🤖 Smart categorized {len(uncategorized)} transactions")
+                    st.rerun()
+                else:
+                    st.info("No uncategorized transactions to process")
     
-    # Display table
+    # Display table with performance optimization
     if len(filtered_df) > 0:
-        # Create editable table
+        st.markdown("### 📋 Transaction Editor")
+        
+        # Pagination for large datasets
+        page_size = 100
+        total_pages = (len(filtered_df) - 1) // page_size + 1
+        
+        if total_pages > 1:
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                page = st.selectbox("Page", range(1, total_pages + 1), key="page_selector")
+            
+            start_idx = (page - 1) * page_size
+            end_idx = min(start_idx + page_size, len(filtered_df))
+            page_df = filtered_df.iloc[start_idx:end_idx]
+            
+            st.info(f"📄 Showing page {page} of {total_pages} ({start_idx + 1}-{end_idx} of {len(filtered_df)} transactions)")
+        else:
+            page_df = filtered_df
+        
+        # Create editable table with enhanced performance
+        table_start = time.time()
         edited_df = st.data_editor(
-            filtered_df,
+            page_df,
             column_config={
                 "Date": st.column_config.DateColumn(
                     "Date",
@@ -329,32 +446,70 @@ def display_transaction_table(df):
             },
             hide_index=True,
             use_container_width=True,
-            key="transaction_editor"
+            key=f"transaction_editor_{page if total_pages > 1 else 0}"
         )
         
+        table_time = time.time() - table_start
+        
         # Update session state with changes
-        if not edited_df.equals(filtered_df):
+        if not edited_df.equals(page_df):
+            update_start = time.time()
             for idx in edited_df.index:
-                if idx in filtered_df.index:
+                if idx in page_df.index:
                     st.session_state.transactions.loc[idx] = edited_df.loc[idx]
+            
+            update_time = time.time() - update_start
+            st.info(f"⚡ Table rendered in {table_time:.3f}s | Updates applied in {update_time:.3f}s")
     
-    # Progress indicator
+    # Enhanced progress indicator with performance metrics
     progress_stats = st.session_state.category_engine.get_progress_stats(df)
     progress_percentage = progress_stats['progress_percentage']
     
-    st.markdown(f"**Categorization Progress: {progress_percentage:.1f}% ({progress_stats['categorized']}/{progress_stats['total_transactions']})**")
-    st.progress(progress_percentage / 100)
+    col1, col2, col3 = st.columns([2, 1, 1])
+    
+    with col1:
+        st.markdown(f"**Categorization Progress: {progress_percentage:.1f}% ({progress_stats['categorized']}/{progress_stats['total_transactions']})**")
+        st.progress(progress_percentage / 100)
+    
+    with col2:
+        st.metric("Categorized", progress_stats['categorized'])
+    
+    with col3:
+        st.metric("Remaining", progress_stats['total_transactions'] - progress_stats['categorized'])
+
+@st.cache_data(ttl=300)  # Cache dashboard calculations for 5 minutes
+def calculate_dashboard_metrics(df):
+    """Calculate dashboard metrics with caching for better performance"""
+    start_time = time.time()
+    
+    # Calculate summary metrics
+    validation = validate_transaction_data(df)
+    progress_stats = st.session_state.category_engine.get_progress_stats(df)
+    
+    calculation_time = time.time() - start_time
+    
+    return {
+        'validation': validation,
+        'progress_stats': progress_stats,
+        'calculation_time': calculation_time
+    }
 
 def display_dashboard(df):
-    """Display financial dashboard with charts"""
+    """Display financial dashboard with enhanced performance and caching"""
     if df.empty:
         st.info("📊 Upload and categorize transactions to see your financial dashboard!")
         return
     
-    # Calculate summary metrics
-    validation = validate_transaction_data(df)
+    # Performance tracking
+    dashboard_start = time.time()
     
-    # Main metrics
+    # Calculate metrics with caching
+    metrics = calculate_dashboard_metrics(df)
+    validation = metrics['validation']
+    progress_stats = metrics['progress_stats']
+    calculation_time = metrics['calculation_time']
+    
+    # Main metrics with performance info
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -380,12 +535,14 @@ def display_dashboard(df):
         )
     
     with col4:
-        progress_stats = st.session_state.category_engine.get_progress_stats(df)
         st.metric(
             label="✅ Categorized",
             value=f"{progress_stats['categorized']}/{progress_stats['total_transactions']}",
             delta=f"{progress_stats['progress_percentage']:.1f}%"
         )
+    
+    # Performance indicator
+    st.caption(f"⚡ Dashboard calculated in {calculation_time:.3f}s")
     
     st.markdown("---")
     
